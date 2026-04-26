@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comic Universe</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ff2a2a">
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bangers&display=swap');
+
+body{
+margin:0;
+font-family:Arial;
+background:linear-gradient(180deg,#0a0005,#000);
+color:white;
+}
+
+.nav{
+display:flex;
+background:rgba(20,0,0,0.85);
+backdrop-filter: blur(10px);
+border-bottom:2px solid #e62429;
+}
+
+.nav button{
+flex:1;
+padding:14px;
+border:none;
+background:none;
+color:#aaa;
+font-weight:bold;
+cursor:pointer;
+}
+
+.nav button.active{
+color:#ff2a2a;
+text-shadow:0 0 12px #ff2a2a;
+}
+
+.screen{display:none;padding:15px;}
+.screen.active{display:block;}
+
+.stats{
+font-size:13px;
+opacity:0.8;
+margin:6px 0;
+}
+
+.swipeRow{
+display:flex;
+overflow-x:auto;
+gap:12px;
+padding:10px;
+scroll-snap-type:x mandatory;
+-webkit-overflow-scrolling:touch;
+}
+
+.swipeRow::-webkit-scrollbar{display:none;}
+
+.marvelCard{
+min-width:150px;
+height:220px;
+flex-shrink:0;
+
+border-radius:18px;
+background:linear-gradient(145deg,#1a0000,#0a0000);
+border:1px solid #ff2a2a55;
+
+scroll-snap-align:center;
+
+display:flex;
+flex-direction:column;
+justify-content:space-between;
+
+padding:12px;
+transition:0.2s;
+}
+
+.marvelCard:hover{
+transform:scale(1.05);
+box-shadow:0 0 25px #ff2a2a55;
+}
+
+.mcTitle{
+font-family:'Bangers';
+font-size:16px;
+color:#ff3b3b;
+}
+
+.mcInfo{
+font-size:11px;
+opacity:0.75;
+}
+
+.mcButtons{
+display:flex;
+justify-content:space-between;
+}
+
+button{
+padding:6px;
+border:none;
+border-radius:10px;
+background:#1a0000;
+color:white;
+cursor:pointer;
+}
+
+.like{color:#ff3b7a;}
+
+#overlay{
+position:fixed;
+top:0;left:0;
+width:100%;height:100%;
+background:rgba(0,0,0,0.85);
+display:none;
+justify-content:center;
+align-items:center;
+z-index:9999;
+}
+
+#cardView{
+background:#0b0000;
+padding:20px;
+border-radius:16px;
+width:90%;
+max-width:420px;
+border:2px solid #ff2a2a;
+}
+</style>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+
+</head>
+
+<body>
+
+<div class="nav">
+<button onclick="show('home',this)" class="active">🏠 Feed</button>
+<button onclick="show('collection',this)">📚 Sammlung</button>
+<button onclick="show('profile',this)">👤 Profil</button>
+</div>
+
+<div id="home" class="screen active">
+<h2>🔥 Feed</h2>
+<div class="stats" id="feedStats"></div>
+<div id="feed"></div>
+</div>
+
+<div id="collection" class="screen">
+<h2>📚 Sammlung</h2>
+<div class="stats" id="collectionStats"></div>
+<div id="collectionList"></div>
+</div>
+
+<div id="profile" class="screen">
+<h2>👤 Account</h2>
+
+<button id="loginBtn" onclick="login()">Google Login</button>
+<button id="logoutBtn" onclick="logout()" style="display:none;">Logout</button>
+
+<p id="status">Offline</p>
+
+<div id="admin" style="display:none">
+
+<h3>➕ Comic erstellen</h3>
+
+<input id="title" placeholder="Titel">
+<input id="author" placeholder="Autor">
+<input id="publisher" placeholder="Publisher">
+<input id="pages" placeholder="Seiten">
+<input id="price" placeholder="Preis">
+<input id="date" placeholder="Datum">
+
+<button onclick="addComic()">Hinzufügen</button>
+
+</div>
+</div>
+
+<div id="overlay" onclick="closeCard()">
+<div id="cardView"></div>
+</div>
+
+<script>
+
+const firebaseConfig={
+apiKey:"AIzaSyD7rATqBEgOi1BMK9kI0Qr5ro825vINx_A",
+authDomain:"comic-tracker-11dce.firebaseapp.com",
+projectId:"comic-tracker-11dce"
+};
+
+firebase.initializeApp(firebaseConfig);
+
+const db=firebase.firestore();
+const auth=firebase.auth();
+const provider=new firebase.auth.GoogleAuthProvider();
+
+let user=null;
+let comics=[];
+let collection=[];
+
+const ADMIN="pepehartmann825@gmail.com";
+
+/* NAV */
+function show(id,btn){
+document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+document.getElementById(id).classList.add("active");
+
+document.querySelectorAll(".nav button").forEach(b=>b.classList.remove("active"));
+btn.classList.add("active");
+}
+
+/* LOGIN */
+function login(){
+auth.signInWithPopup(provider)
+.then(r=>{
+user=r.user.email;
+updateUI();
+load();
+loadCollection();
+});
+}
+
+function logout(){
+auth.signOut().then(()=>{
+user=null;
+collection=[];
+updateUI();
+render();
+});
+}
+
+auth.onAuthStateChanged(u=>{
+user=u?u.email:null;
+updateUI();
+load();
+loadCollection();
+});
+
+function updateUI(){
+loginBtn.style.display=user?"none":"block";
+logoutBtn.style.display=user?"block":"none";
+status.innerText=user?"👤 "+user:"Offline";
+admin.style.display=(user===ADMIN)?"block":"none";
+}
+
+/* ADD */
+function addComic(){
+db.collection("comics").add({
+title:title.value,
+author:author.value,
+publisher:publisher.value,
+pages:pages.value,
+price:price.value,
+date:date.value,
+likes:0,
+likedBy:[]
+}).then(load);
+}
+
+/* DELETE (NEU) */
+function deleteComic(id){
+if(user===ADMIN){
+db.collection("comics").doc(id).delete().then(load);
+}
+}
+
+/* LOAD */
+function load(){
+db.collection("comics").get().then(s=>{
+comics=[];
+s.forEach(d=>comics.push({id:d.id,...d.data()}));
+render();
+updateStats();
+});
+}
+
+/* COLLECTION */
+function addToCollection(c){
+if(!user)return;
+
+db.collection("users").doc(user)
+.collection("collection")
+.doc(c.id)
+.set(c)
+.then(loadCollection);
+}
+
+function loadCollection(){
+if(!user)return;
+
+db.collection("users").doc(user)
+.collection("collection")
+.get()
+.then(s=>{
+collection=[];
+s.forEach(d=>collection.push({id:d.id,...d.data()}));
+render();
+updateStats();
+});
+}
+
+function removeFromCollection(id){
+db.collection("users").doc(user)
+.collection("collection")
+.doc(id)
+.delete()
+.then(loadCollection);
+}
+
+/* LIKE */
+function toggleLike(c){
+if(!user)return;
+
+const ref=db.collection("comics").doc(c.id);
+
+ref.get().then(doc=>{
+let data=doc.data();
+let likes=data.likes||0;
+let likedBy=data.likedBy||[];
+
+if(likedBy.includes(user)){
+likedBy=likedBy.filter(u=>u!==user);
+likes--;
+}else{
+likedBy.push(user);
+likes++;
+}
+
+ref.update({likes,likedBy}).then(load);
+});
+}
+
+/* CARD */
+function openCard(c){
+overlay.style.display="flex";
+
+cardView.innerHTML=`
+<h2>${c.title}</h2>
+
+<p>✍️ ${c.author}</p>
+<p>🏢 ${c.publisher}</p>
+<p>📄 ${c.pages} Seiten</p>
+<p>💰 ${c.price} €</p>
+<p>📅 ${c.date}</p>
+
+<button onclick="toggleLike(comics.find(x=>x.id==='${c.id}'))">Like</button>
+<button onclick="addToCollection(comics.find(x=>x.id==='${c.id}'))">➕ Sammlung</button>
+
+${user===ADMIN ? `<button onclick="deleteComic('${c.id}'); closeCard();">🗑 Löschen</button>` : ""}
+
+<br><br>
+<button onclick="closeCard()">Schließen</button>
+`;
+}
+
+function openCollectionCard(id){
+const c=collection.find(x=>x.id===id);
+overlay.style.display="flex";
+
+cardView.innerHTML=`
+<h2>${c.title}</h2>
+
+<p>💰 ${c.price} €</p>
+<p>📅 ${c.date}</p>
+
+<button onclick="removeFromCollection('${c.id}')">❌ Entfernen</button>
+<br><br>
+<button onclick="closeCard()">Schließen</button>
+`;
+}
+
+function closeCard(){
+overlay.style.display="none";
+}
+
+/* STATS */
+function updateStats(){
+
+document.getElementById("feedStats").innerText=
+`📚 Comics: ${comics.length}`;
+
+let pages=collection.reduce((s,c)=>s+Number(c.pages||0),0);
+let price=collection.reduce((s,c)=>s+Number(c.price||0),0);
+
+document.getElementById("collectionStats").innerText=
+`📦 ${collection.length} Comics | 📄 ${pages} Seiten | 💰 ${price.toFixed(2)}€`;
+}
+
+/* RENDER */
+function render(){
+
+feed.innerHTML=`
+<div class="swipeRow">
+
+${comics.map((c,i)=>`
+
+<div class="marvelCard" onclick="openCard(comics[${i}])">
+
+<div>
+<div class="mcTitle">${c.title}</div>
+<div class="mcInfo">${c.publisher}</div>
+<div class="mcInfo">${c.pages} Seiten</div>
+<div class="mcInfo">${c.price}€</div>
+<div class="mcInfo">${c.date}</div>
+</div>
+
+<div class="mcButtons">
+
+<button onclick="event.stopPropagation();toggleLike(comics[${i}])">
+❤️ ${c.likes}
+</button>
+
+<button onclick="event.stopPropagation();addToCollection(comics[${i}])">➕</button>
+
+</div>
+
+</div>
+
+`).join("")}
+
+</div>
+`;
+
+collectionList.innerHTML=`
+<div class="swipeRow">
+
+${collection.map(c=>`
+
+<div class="marvelCard" onclick="openCollectionCard('${c.id}')">
+
+<div class="mcTitle">${c.title}</div>
+<div class="mcInfo">${c.price}€</div>
+<div class="mcInfo">${c.date}</div>
+
+<div class="mcButtons">
+<button onclick="event.stopPropagation();removeFromCollection('${c.id}')">❌</button>
+</div>
+
+</div>
+
+`).join("")}
+
+</div>
+`;
+}
+
+load();
+
+if("serviceWorker" in navigator){
+window.addEventListener("load",()=>{
+navigator.serviceWorker.register("./sw.js");
+});
+}
+
+</script>
+
+</body>
+</html>
